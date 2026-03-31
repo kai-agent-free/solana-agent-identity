@@ -1,88 +1,88 @@
 import type {
   IdentityProvider,
-  IdentityQuery,
   IdentityResult,
-  CredentialQuery,
-  CredentialResult,
+  VerifyOptions,
 } from "../types";
 
-const AGENTID_API =
-  process.env.AGENTID_API_URL || "https://getagentid.dev/api";
+const DEFAULT_API = "https://getagentid.dev";
+
+export interface AgentIDConfig {
+  apiUrl?: string;
+}
 
 /**
- * AgentID provider — Ed25519 identity with trust levels L0-L4.
- * Stub implementation — to be completed by @haroldmalikfrimpong-ops.
- * See: https://github.com/haroldmalikfrimpong-ops/getagentid
+ * AgentID provider — Ed25519 key-based identity with trust levels L0-L4.
+ * Contributed by @haroldmalikfrimpong-ops
+ * https://github.com/haroldmalikfrimpong-ops/getagentid
  */
 export class AgentIDProvider implements IdentityProvider {
-  name = "agentid";
+  readonly name = "agentid";
+  private apiUrl: string;
 
-  async verify(query: IdentityQuery): Promise<IdentityResult> {
-    const wallet = query.wallet;
-    if (!wallet) {
-      return { verified: false, provider: this.name, error: "wallet address required" };
-    }
+  constructor(config?: AgentIDConfig) {
+    this.apiUrl = config?.apiUrl || process.env.AGENTID_API_URL || DEFAULT_API;
+  }
 
+  async verify(
+    walletOrAgentId: string,
+    options?: VerifyOptions
+  ): Promise<IdentityResult> {
     try {
       // AgentID: wallet address IS the agent identity (Ed25519 → Solana address)
-      const res = await fetch(`${AGENTID_API}/agents/${wallet}/trust-header`, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(5000),
-      });
+      const res = await fetch(
+        `${this.apiUrl}/api/agents/${walletOrAgentId}`,
+        {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(options?.timeoutMs || 5000),
+        }
+      );
 
       if (!res.ok) {
-        return { verified: false, provider: this.name, error: `Not found (${res.status})` };
+        return {
+          verified: false,
+          provider: this.name,
+          error: `Agent not found (${res.status})`,
+        };
       }
 
-      const data = await res.json();
+      const agent = await res.json();
+
+      // Trust header for trust level data
+      let trustLevel: string | undefined;
+      try {
+        const trustRes = await fetch(
+          `${this.apiUrl}/api/agents/${walletOrAgentId}/trust-header`,
+          {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(3000),
+          }
+        );
+        if (trustRes.ok) {
+          const trust = await trustRes.json();
+          trustLevel = trust.level || trust.trust_level;
+        }
+      } catch {
+        // Trust header optional
+      }
+
       return {
         verified: true,
         provider: this.name,
-        agentId: wallet,
-        name: data.name,
-        trustScore: this.normalizeTrustLevel(data.trust_level),
-        onchain: true, // AgentID is Solana-native
+        name: agent.name || agent.display_name,
+        trustLevel,
+        onchainBound: true, // AgentID: key IS the wallet
         metadata: {
-          trustLevel: data.trust_level,
-          verificationCount: data.verification_count,
+          agentId: agent.id,
+          publicKey: agent.public_key,
+          registeredAt: agent.created_at,
         },
       };
     } catch (err: any) {
-      return { verified: false, provider: this.name, error: err.message };
+      return {
+        verified: false,
+        provider: this.name,
+        error: `API error: ${err.message}`,
+      };
     }
-  }
-
-  async checkCredential(query: CredentialQuery): Promise<CredentialResult> {
-    // AgentID uses trust levels, not credentials — map trust level check
-    const result = await this.verify({ wallet: query.wallet, agentId: query.agentId });
-    if (!result.verified) {
-      return { hasCredential: false, provider: this.name, credentials: [] };
-    }
-
-    const trustLevel = (result.metadata?.trustLevel as number) ?? 0;
-    const minLevel = query.minTrustLevel ?? 0;
-
-    return {
-      hasCredential: trustLevel >= minLevel,
-      provider: this.name,
-      credentials: [
-        {
-          type: `trust_level_${trustLevel}`,
-          issuer: "agentid_system",
-          metadata: { trustLevel, meetsMinimum: trustLevel >= minLevel },
-        },
-      ],
-    };
-  }
-
-  async trustScore(query: IdentityQuery): Promise<number | null> {
-    const result = await this.verify(query);
-    return result.trustScore ?? null;
-  }
-
-  /** Normalize AgentID trust levels (L0-L4) to 0-1 range */
-  private normalizeTrustLevel(level: number | undefined): number {
-    if (level === undefined || level === null) return 0;
-    return Math.min(level / 4, 1);
   }
 }

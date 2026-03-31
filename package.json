@@ -1,5 +1,5 @@
 {
-  "name": "@solana-agent-kit/plugin-identity",
+  "name": "solana-agent-identity",
   "version": "0.1.0",
   "description": "Unified agent identity verification plugin for Solana Agent Kit — one plugin, multiple providers",
   "main": "dist/index.js",
@@ -8,7 +8,7 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
-  "keywords": ["solana", "agent", "identity", "agentpass", "agentid", "credentials", "trust"],
+  "keywords": ["solana", "agent", "identity", "agentpass", "agentid", "satp", "credentials", "verification"],
   "license": "MIT",
   "peerDependencies": {
     "solana-agent-kit": "^2.0.0"

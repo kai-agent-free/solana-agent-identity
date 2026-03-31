@@ -1,112 +1,124 @@
-import { PublicKey } from "@solana/web3.js";
-import type { Connection } from "@solana/web3.js";
+import type { PublicKey } from "@solana/web3.js";
 import type {
   IdentityProvider,
-  IdentityQuery,
   IdentityResult,
-  CredentialQuery,
-  CredentialResult,
+  Credential,
+  VerifyOptions,
 } from "../types";
+import { PublicKey as SolanaPublicKey } from "@solana/web3.js";
 
-const AGENTPASS_API =
-  process.env.AGENTPASS_API_URL || "https://api.agentpass.space";
-const PROGRAM_ID = new PublicKey(
+const DEFAULT_API = "https://api.agentpass.space";
+const PROGRAM_ID = new SolanaPublicKey(
   "7HuhmDEqdMn39DqzCFyxmjMQPbJvdtrDGLZm9bxgUzBw"
 );
 
-export class AgentPassProvider implements IdentityProvider {
-  name = "agentpass";
-  private connection?: Connection;
+export interface AgentPassConfig {
+  apiUrl?: string;
+  /** Solana connection for on-chain checks */
+  connection?: { getAccountInfo: (key: PublicKey) => Promise<any> };
+}
 
-  constructor(connection?: Connection) {
-    this.connection = connection;
+export class AgentPassProvider implements IdentityProvider {
+  readonly name = "agentpass";
+  private apiUrl: string;
+  private connection?: AgentPassConfig["connection"];
+
+  constructor(config?: AgentPassConfig) {
+    this.apiUrl = config?.apiUrl || process.env.AGENTPASS_API_URL || DEFAULT_API;
+    this.connection = config?.connection;
   }
 
-  async verify(query: IdentityQuery): Promise<IdentityResult> {
-    const passportId = query.agentId;
-    if (!passportId) {
-      return { verified: false, provider: this.name, error: "agentId (passport_id) required" };
-    }
-
+  async verify(
+    passportId: string,
+    options?: VerifyOptions
+  ): Promise<IdentityResult> {
     try {
-      const res = await fetch(`${AGENTPASS_API}/v1/passports/${passportId}`, {
+      const res = await fetch(`${this.apiUrl}/v1/passports/${passportId}`, {
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(options?.timeoutMs || 5000),
       });
+
       if (!res.ok) {
-        return { verified: false, provider: this.name, error: `Not found (${res.status})` };
+        return {
+          verified: false,
+          provider: this.name,
+          error: `Passport not found (${res.status})`,
+        };
       }
+
       const data = await res.json();
       const passport = data.passport ?? data;
 
       if (passport.status && passport.status !== "active") {
-        return { verified: false, provider: this.name, error: `Status: ${passport.status}` };
+        return {
+          verified: false,
+          provider: this.name,
+          error: `Passport status: ${passport.status}`,
+        };
       }
 
       const result: IdentityResult = {
         verified: true,
         provider: this.name,
-        agentId: passportId,
         name: passport.name,
-        metadata: { email: passport.email },
+        email: passport.email,
+        metadata: { passportId: passport.id },
       };
 
-      // Check on-chain binding if connection available
-      if (this.connection) {
+      // On-chain check
+      if (options?.checkOnchain !== false && this.connection) {
         try {
-          const [pda] = PublicKey.findProgramAddressSync(
+          const [pda] = SolanaPublicKey.findProgramAddressSync(
             [Buffer.from("passport"), Buffer.from(passportId)],
             PROGRAM_ID
           );
-          const info = await this.connection.getAccountInfo(pda);
-          result.onchain = info !== null;
+          const account = await this.connection.getAccountInfo(pda as any);
+          result.onchainBound = account !== null;
         } catch {
-          result.onchain = false;
+          result.onchainBound = false;
         }
       }
 
       return result;
     } catch (err: any) {
-      return { verified: false, provider: this.name, error: err.message };
+      return {
+        verified: false,
+        provider: this.name,
+        error: `API error: ${err.message}`,
+      };
     }
   }
 
-  async checkCredential(query: CredentialQuery): Promise<CredentialResult> {
-    const passportId = query.agentId;
-    if (!passportId) {
-      return { hasCredential: false, provider: this.name, credentials: [], error: "agentId required" };
-    }
-
+  async checkCredentials(
+    passportId: string,
+    credentialType?: string
+  ): Promise<Credential[]> {
     try {
-      const url = new URL(`${AGENTPASS_API}/v1/passports/${passportId}/credentials`);
-      if (query.credentialType) url.searchParams.set("type", query.credentialType);
+      const url = new URL(
+        `${this.apiUrl}/v1/passports/${passportId}/credentials`
+      );
+      if (credentialType) url.searchParams.set("type", credentialType);
 
       const res = await fetch(url.toString(), {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(5000),
       });
 
-      if (!res.ok) {
-        return { hasCredential: false, provider: this.name, credentials: [] };
-      }
+      if (!res.ok) return [];
 
       const data = await res.json();
-      const creds = (data.credentials ?? data ?? []).map((c: any) => ({
+      const creds = data.credentials ?? data ?? [];
+
+      return creds.map((c: any) => ({
         type: c.type || c.credential_type || "unknown",
         issuer: c.issuer || "unknown",
+        subject: c.subject || passportId,
+        anchoredOnchain: false, // TODO: check on-chain
         issuedAt: c.issued_at,
-        onchain: false, // Would need on-chain check per credential
+        expiresAt: c.expires_at,
       }));
-
-      return { hasCredential: creds.length > 0, provider: this.name, credentials: creds };
-    } catch (err: any) {
-      return { hasCredential: false, provider: this.name, credentials: [], error: err.message };
+    } catch {
+      return [];
     }
-  }
-
-  async trustScore(query: IdentityQuery): Promise<number | null> {
-    const result = await this.verify(query);
-    // AgentPass doesn't have numeric trust scores — binary verified/not
-    return result.verified ? 0.5 : null;
   }
 }

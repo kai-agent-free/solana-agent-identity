@@ -1,16 +1,16 @@
-# @solana-agent-kit/plugin-identity
+# solana-agent-identity
 
-Unified agent identity verification for [Solana Agent Kit](https://github.com/sendaifun/solana-agent-kit).
+Unified agent identity verification plugin for [Solana Agent Kit](https://github.com/sendaifun/solana-agent-kit).
 
-**One plugin, multiple identity providers.** Instead of competing plugins that each only check their own system, this plugin queries all registered providers and returns aggregated results.
+One plugin, multiple identity providers. Instead of competing plugins that each only check their own system, this aggregates verification across all providers.
 
-## Supported Providers
+## Providers
 
-| Provider | What it checks | Trust model |
-|----------|---------------|-------------|
-| **AgentPass** | Passport + MVA credentials | Binary verified + credential-based |
-| **AgentID** | Ed25519 identity + trust levels | L0-L4 numeric trust |
-| **SATP** | *(coming soon)* | Portfolio-based |
+| Provider | Maintainer | What it checks |
+|----------|-----------|----------------|
+| **AgentPass** | [@kai-agent-free](https://github.com/kai-agent-free) | Passports, MVA credentials, on-chain PDA binding |
+| **AgentID** | [@haroldmalikfrimpong-ops](https://github.com/haroldmalikfrimpong-ops) | Ed25519 identity, trust levels L0-L4 |
+| **SATP** | [@0xbrainkid](https://github.com/0xbrainkid) | Behavioral trust, reputation scoring *(coming soon)* |
 
 ## Usage
 
@@ -20,26 +20,47 @@ import {
   createIdentityPlugin,
   AgentPassProvider,
   AgentIDProvider,
-} from "@solana-agent-kit/plugin-identity";
+} from "solana-agent-identity";
+
+const plugin = createIdentityPlugin([
+  new AgentPassProvider(),
+  new AgentIDProvider(),
+  // new SATPProvider(),  // coming soon
+]);
 
 const agent = new SolanaAgentKit(privateKey, rpcUrl, {});
+agent.use(plugin);
 
-// Register providers you want to use
-agent.use(
-  createIdentityPlugin(
-    new AgentPassProvider(agent.connection),
-    new AgentIDProvider()
-  )
-);
-
-// Verify an agent — checks all providers
+// Verify across all providers
 const result = await agent.methods.verify_agent({
-  wallet: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+  identifier: "ap_a622a643aa71",
 });
+// → { verified: true, verifiedCount: 1, totalProviders: 2, results: [...] }
 
-console.log(result.verified);      // true if ANY provider verified
-console.log(result.verifiedBy);    // ["agentpass", "agentid"]
-console.log(result.bestTrustScore); // 0.75 (highest across providers)
+// Filter to specific providers
+const result2 = await agent.methods.verify_agent({
+  identifier: "7xKXt...",
+  providers: ["agentid"],
+});
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│         Solana Agent Kit                │
+│         (VERIFY_AGENT_IDENTITY)         │
+└──────────────┬──────────────────────────┘
+               │
+       ┌───────▼────────┐
+       │ Identity Plugin │  ← one plugin
+       │ (aggregator)    │
+       └──┬─────┬─────┬─┘
+          │     │     │
+    ┌─────▼─┐ ┌▼────┐ ┌▼────┐
+    │Agent  │ │Agent│ │SATP │  ← multiple providers
+    │Pass   │ │ID   │ │     │
+    └───────┘ └─────┘ └─────┘
 ```
 
 ## Adding a Provider
@@ -47,39 +68,34 @@ console.log(result.bestTrustScore); // 0.75 (highest across providers)
 Implement the `IdentityProvider` interface:
 
 ```typescript
-import type { IdentityProvider, IdentityQuery, IdentityResult } from "@solana-agent-kit/plugin-identity";
+import type { IdentityProvider, IdentityResult, VerifyOptions } from "solana-agent-identity";
 
-class MyProvider implements IdentityProvider {
-  name = "myprovider";
+export class MyProvider implements IdentityProvider {
+  readonly name = "my-provider";
 
-  async verify(query: IdentityQuery): Promise<IdentityResult> {
+  async verify(identifier: string, options?: VerifyOptions): Promise<IdentityResult> {
     // Your verification logic
-    return { verified: true, provider: this.name, agentId: query.wallet };
+    return { verified: true, provider: this.name, name: "Agent Name" };
   }
 }
 ```
 
-Then register it:
-
-```typescript
-const plugin = new UnifiedIdentityPlugin();
-plugin.register(new AgentPassProvider());
-plugin.register(new AgentIDProvider());
-plugin.register(new MyProvider());
-agent.use(plugin.toPlugin());
-```
+Then pass it to `createIdentityPlugin([..., new MyProvider()])`.
 
 ## Contributing
 
-This is a collaborative project. Current contributors:
-- **AgentPass** adapter — [@kai-agent-free](https://github.com/kai-agent-free)
-- **AgentID** adapter — [@haroldmalikfrimpong-ops](https://github.com/haroldmalikfrimpong-ops) *(in progress)*
+PRs welcome! Especially:
+- **SATP provider** — @0xbrainkid
+- **New providers** — any identity system can plug in
+- **Tests** — always needed
+- **Cross-provider credential verification** — check if a credential from one system is recognized by another
 
-PRs welcome for new providers and improvements.
+## Related
 
-## Context
-
-Born from discussion on [solana-agent-kit#542](https://github.com/sendaifun/solana-agent-kit/issues/542) — the Solana agent ecosystem needs shared identity infrastructure, and composable standards beat competing silos.
+- [AgentPass](https://github.com/kai-agent-free/AgentPass) — Identity layer for AI agents
+- [AgentID](https://github.com/haroldmalikfrimpong-ops/getagentid) — Cryptographic identity with trust levels
+- [SATP](https://agentfolio.bot) — Solana Agent Trust Protocol
+- [Solana Agent Kit](https://github.com/sendaifun/solana-agent-kit) — Connect AI agents to Solana
 
 ## License
 
