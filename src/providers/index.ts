@@ -1,4 +1,2 @@
-export { createAgentPassProvider } from "./agentpass";
-export type { AgentPassConfig } from "./agentpass";
-export { createAgentIDProvider } from "./agentid";
-export type { AgentIDConfig } from "./agentid";
+export { AgentPassProvider } from "./agentpass";
+export { AgentIDProvider } from "./agentid";

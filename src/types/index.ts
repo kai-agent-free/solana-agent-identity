@@ -1,85 +1,74 @@
 /**
- * Unified Agent Identity types for Solana Agent Kit.
- * 
- * This plugin supports multiple identity providers (AgentPass, AgentID, SATP)
- * through a common IdentityProvider interface. One plugin, multiple backends.
- */
-
-/** Result of verifying an agent's identity */
-export interface VerifyResult {
-  /** Whether the agent was verified by at least one provider */
-  verified: boolean;
-  /** Which provider verified the agent (null if none) */
-  provider: string | null;
-  /** Agent's display name */
-  name?: string;
-  /** Agent's email */
-  email?: string;
-  /** Trust level (0-1 normalized across providers) */
-  trustScore?: number;
-  /** Whether the identity is bound to a Solana wallet on-chain */
-  onchainBound?: boolean;
-  /** Raw provider-specific data */
-  metadata?: Record<string, unknown>;
-  /** Error message if verification failed */
-  error?: string;
-}
-
-/** A verifiable credential from any provider */
-export interface Credential {
-  /** Credential type (e.g., "capability", "endorsement", "audit") */
-  type: string;
-  /** Who issued the credential */
-  issuer: string;
-  /** Who the credential is about */
-  subject: string;
-  /** Whether anchored on-chain */
-  onchain: boolean;
-  /** Provider that issued it */
-  provider: string;
-  /** Additional data */
-  metadata?: Record<string, unknown>;
-}
-
-/** Result of checking credentials */
-export interface CredentialCheckResult {
-  /** Whether any matching credentials were found */
-  hasCredentials: boolean;
-  /** All matching credentials across providers */
-  credentials: Credential[];
-}
-
-/**
- * Interface that all identity providers must implement.
- * AgentPass, AgentID, SATP each provide an adapter.
+ * Unified identity provider interface for Solana Agent Kit.
+ * Each identity system (AgentPass, AgentID, SATP, etc.) implements this.
  */
 export interface IdentityProvider {
   /** Unique provider name (e.g., "agentpass", "agentid", "satp") */
   name: string;
 
-  /**
-   * Verify an agent's identity.
-   * @param identifier - Provider-specific ID (passport ID, wallet address, etc.)
-   * @param options - Optional: check on-chain binding, etc.
-   */
-  verify(
-    identifier: string,
-    options?: { checkOnchain?: boolean }
-  ): Promise<VerifyResult>;
+  /** Verify an agent's identity by wallet address or provider-specific ID */
+  verify(query: IdentityQuery): Promise<IdentityResult>;
 
-  /**
-   * Check credentials for an agent.
-   * @param identifier - Provider-specific ID
-   * @param filter - Optional credential type filter
-   */
-  checkCredentials(
-    identifier: string,
-    filter?: { type?: string }
-  ): Promise<CredentialCheckResult>;
+  /** Check if agent has a specific credential/trust level */
+  checkCredential?(query: CredentialQuery): Promise<CredentialResult>;
 
-  /**
-   * Resolve a Solana wallet address to a provider identity.
-   * Returns null if no mapping exists.
-   */
-  resolveWallet?(walletAddress: string): Promise<string | null>;
+  /** Get the trust score for an agent (normalized 0-1) */
+  trustScore?(query: IdentityQuery): Promise<number | null>;
+}
+
+export interface IdentityQuery {
+  /** Solana wallet address */
+  wallet?: string;
+  /** Provider-specific agent ID (e.g., passport_id for AgentPass) */
+  agentId?: string;
+}
+
+export interface IdentityResult {
+  verified: boolean;
+  provider: string;
+  /** Provider-specific agent identifier */
+  agentId?: string;
+  /** Human-readable name */
+  name?: string;
+  /** Trust score normalized 0-1 (if available) */
+  trustScore?: number;
+  /** Whether identity is anchored on-chain */
+  onchain?: boolean;
+  /** Raw provider-specific data */
+  metadata?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface CredentialQuery {
+  wallet?: string;
+  agentId?: string;
+  /** Credential type to check (e.g., "capability", "audit", "endorsement") */
+  credentialType?: string;
+  /** Minimum trust level (provider-specific) */
+  minTrustLevel?: number;
+}
+
+export interface CredentialResult {
+  hasCredential: boolean;
+  provider: string;
+  credentials: Array<{
+    type: string;
+    issuer: string;
+    issuedAt?: string;
+    onchain?: boolean;
+    metadata?: Record<string, unknown>;
+  }>;
+  error?: string;
+}
+
+/** Aggregated result from multiple providers */
+export interface AggregatedIdentity {
+  /** True if ANY provider verified the agent */
+  verified: boolean;
+  /** Results from each provider that responded */
+  results: IdentityResult[];
+  /** Highest trust score across providers */
+  bestTrustScore: number | null;
+  /** Providers that verified this agent */
+  verifiedBy: string[];
 }

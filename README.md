@@ -1,46 +1,45 @@
-# solana-agent-identity
+# @solana-agent-kit/plugin-identity
 
-Unified agent identity plugin for [Solana Agent Kit](https://github.com/sendaifun/solana-agent-kit). One plugin, multiple identity providers.
+Unified agent identity verification for [Solana Agent Kit](https://github.com/sendaifun/solana-agent-kit).
 
-Born from the discussion in [solana-agent-kit#542](https://github.com/sendaifun/solana-agent-kit/issues/542) — the Solana agent ecosystem needs identity infrastructure, but not three competing plugins that each only check their own system. This plugin queries all providers in parallel and returns the best result.
+**One plugin, multiple identity providers.** Instead of competing plugins that each only check their own system, this plugin queries all registered providers and returns aggregated results.
 
 ## Supported Providers
 
-| Provider | Status | Maintainer |
-|----------|--------|------------|
-| [AgentPass](https://agentpass.space) | ✅ Implemented | [@kai-agent-free](https://github.com/kai-agent-free) |
-| [AgentID](https://getagentid.dev) | 🔧 Stub (awaiting adapter) | [@haroldmalikfrimpong-ops](https://github.com/haroldmalikfrimpong-ops) |
-| SATP | 📋 Planned | TBD |
+| Provider | What it checks | Trust model |
+|----------|---------------|-------------|
+| **AgentPass** | Passport + MVA credentials | Binary verified + credential-based |
+| **AgentID** | Ed25519 identity + trust levels | L0-L4 numeric trust |
+| **SATP** | *(coming soon)* | Portfolio-based |
 
 ## Usage
 
 ```typescript
 import { SolanaAgentKit } from "solana-agent-kit";
-import { createIdentityPlugin, createAgentPassProvider, createAgentIDProvider } from "solana-agent-identity";
-
-const identityPlugin = createIdentityPlugin([
-  createAgentPassProvider({ connection: agent.connection }),
-  createAgentIDProvider(),
-]);
+import {
+  createIdentityPlugin,
+  AgentPassProvider,
+  AgentIDProvider,
+} from "@solana-agent-kit/plugin-identity";
 
 const agent = new SolanaAgentKit(privateKey, rpcUrl, {});
-agent.use(identityPlugin);
 
-// Verify across all providers
-const result = await agent.methods.verifyAgent({ identifier: "ap_a622a643aa71" });
-// → { verified: true, provider: "agentpass", name: "Kai", trustScore: 0.7 }
+// Register providers you want to use
+agent.use(
+  createIdentityPlugin(
+    new AgentPassProvider(agent.connection),
+    new AgentIDProvider()
+  )
+);
 
-// Check specific provider
-const agentId = await agent.methods.verifyAgent({
-  identifier: "7xKX...",
-  provider: "agentid",
+// Verify an agent — checks all providers
+const result = await agent.methods.verify_agent({
+  wallet: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
 });
 
-// Check credentials across all providers
-const creds = await agent.methods.checkCredentials({
-  identifier: "ap_a622a643aa71",
-  type: "capability",
-});
+console.log(result.verified);      // true if ANY provider verified
+console.log(result.verifiedBy);    // ["agentpass", "agentid"]
+console.log(result.bestTrustScore); // 0.75 (highest across providers)
 ```
 
 ## Adding a Provider
@@ -48,57 +47,40 @@ const creds = await agent.methods.checkCredentials({
 Implement the `IdentityProvider` interface:
 
 ```typescript
-import type { IdentityProvider } from "solana-agent-identity";
+import type { IdentityProvider, IdentityQuery, IdentityResult } from "@solana-agent-kit/plugin-identity";
 
-export function createMyProvider(): IdentityProvider {
-  return {
-    name: "myprovider",
-    
-    async verify(identifier, options) {
-      // Verify agent identity
-      return { verified: true, provider: "myprovider", name: "Agent", trustScore: 0.5 };
-    },
-    
-    async checkCredentials(identifier, filter) {
-      // Check credentials
-      return { hasCredentials: false, credentials: [] };
-    },
-    
-    // Optional: resolve Solana wallet → provider identity
-    async resolveWallet(walletAddress) {
-      return null;
-    },
-  };
+class MyProvider implements IdentityProvider {
+  name = "myprovider";
+
+  async verify(query: IdentityQuery): Promise<IdentityResult> {
+    // Your verification logic
+    return { verified: true, provider: this.name, agentId: query.wallet };
+  }
 }
 ```
 
 Then register it:
 
 ```typescript
-const plugin = createIdentityPlugin([
-  createMyProvider(),
-  // ...other providers
-]);
+const plugin = new UnifiedIdentityPlugin();
+plugin.register(new AgentPassProvider());
+plugin.register(new AgentIDProvider());
+plugin.register(new MyProvider());
+agent.use(plugin.toPlugin());
 ```
 
-## Actions (for LLM agents)
+## Contributing
 
-| Action | Triggers | Description |
-|--------|----------|-------------|
-| `VERIFY_AGENT_IDENTITY` | "verify agent", "is this agent real" | Verify identity across all providers |
-| `CHECK_AGENT_CREDENTIAL` | "check credential", "agent capabilities" | Check verifiable credentials |
+This is a collaborative project. Current contributors:
+- **AgentPass** adapter — [@kai-agent-free](https://github.com/kai-agent-free)
+- **AgentID** adapter — [@haroldmalikfrimpong-ops](https://github.com/haroldmalikfrimpong-ops) *(in progress)*
 
-## Design Principles
+PRs welcome for new providers and improvements.
 
-- **One plugin, many providers** — agents shouldn't need to know which identity system to query
-- **Parallel verification** — all providers queried simultaneously, first success wins
-- **Normalized trust scores** — each provider maps to 0-1 scale for comparable results
-- **Provider-agnostic credentials** — common `Credential` type across all providers
-- **Open for contribution** — implement `IdentityProvider`, submit a PR
+## Context
 
-## Links
+Born from discussion on [solana-agent-kit#542](https://github.com/sendaifun/solana-agent-kit/issues/542) — the Solana agent ecosystem needs shared identity infrastructure, and composable standards beat competing silos.
 
-- [Discussion: SAK#542](https://github.com/sendaifun/solana-agent-kit/issues/542)
-- [AgentPass](https://github.com/kai-agent-free/AgentPass)
-- [AgentID](https://github.com/haroldmalikfrimpong-ops/getagentid)
-- [MVA Credential](https://github.com/kai-agent-free/mva-credential)
+## License
+
+MIT

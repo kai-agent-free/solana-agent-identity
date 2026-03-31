@@ -1,119 +1,112 @@
-import type {
-  IdentityProvider,
-  VerifyResult,
-  CredentialCheckResult,
-} from "../types";
 import { PublicKey } from "@solana/web3.js";
 import type { Connection } from "@solana/web3.js";
+import type {
+  IdentityProvider,
+  IdentityQuery,
+  IdentityResult,
+  CredentialQuery,
+  CredentialResult,
+} from "../types";
 
-const DEFAULT_API = "https://api.agentpass.space";
+const AGENTPASS_API =
+  process.env.AGENTPASS_API_URL || "https://api.agentpass.space";
 const PROGRAM_ID = new PublicKey(
   "7HuhmDEqdMn39DqzCFyxmjMQPbJvdtrDGLZm9bxgUzBw"
 );
 
-export interface AgentPassConfig {
-  apiUrl?: string;
-  connection?: Connection;
-}
+export class AgentPassProvider implements IdentityProvider {
+  name = "agentpass";
+  private connection?: Connection;
 
-export function createAgentPassProvider(
-  config: AgentPassConfig = {}
-): IdentityProvider {
-  const apiUrl = config.apiUrl || DEFAULT_API;
+  constructor(connection?: Connection) {
+    this.connection = connection;
+  }
 
-  return {
-    name: "agentpass",
+  async verify(query: IdentityQuery): Promise<IdentityResult> {
+    const passportId = query.agentId;
+    if (!passportId) {
+      return { verified: false, provider: this.name, error: "agentId (passport_id) required" };
+    }
 
-    async verify(identifier, options = {}): Promise<VerifyResult> {
-      try {
-        const res = await fetch(`${apiUrl}/v1/passports/${identifier}`, {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (!res.ok) {
-          return {
-            verified: false,
-            provider: "agentpass",
-            error: `Passport not found (${res.status})`,
-          };
-        }
-        const data = await res.json();
-        const passport = data.passport ?? data;
-
-        if (passport.status && passport.status !== "active") {
-          return {
-            verified: false,
-            provider: "agentpass",
-            error: `Passport status: ${passport.status}`,
-          };
-        }
-
-        const result: VerifyResult = {
-          verified: true,
-          provider: "agentpass",
-          name: passport.name,
-          email: passport.email,
-          trustScore: 0.5, // Base trust for verified passport
-        };
-
-        // Check on-chain binding if requested and connection available
-        if (options.checkOnchain !== false && config.connection) {
-          try {
-            const [pda] = PublicKey.findProgramAddressSync(
-              [Buffer.from("passport"), Buffer.from(identifier)],
-              PROGRAM_ID
-            );
-            const account = await config.connection.getAccountInfo(pda);
-            result.onchainBound = account !== null;
-            if (account) result.trustScore = 0.7; // Higher trust if on-chain
-          } catch {
-            result.onchainBound = false;
-          }
-        }
-
-        return result;
-      } catch (err: any) {
-        return {
-          verified: false,
-          provider: "agentpass",
-          error: `API error: ${err.message}`,
-        };
+    try {
+      const res = await fetch(`${AGENTPASS_API}/v1/passports/${passportId}`, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        return { verified: false, provider: this.name, error: `Not found (${res.status})` };
       }
-    },
+      const data = await res.json();
+      const passport = data.passport ?? data;
 
-    async checkCredentials(identifier, filter = {}): Promise<CredentialCheckResult> {
-      try {
-        const url = new URL(`${apiUrl}/v1/passports/${identifier}/credentials`);
-        if (filter.type) url.searchParams.set("type", filter.type);
-
-        const res = await fetch(url.toString(), {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(5000),
-        });
-
-        if (!res.ok) {
-          return { hasCredentials: false, credentials: [] };
-        }
-
-        const data = await res.json();
-        const creds = (data.credentials ?? data ?? []).map((c: any) => ({
-          type: c.type || c.credential_type || "unknown",
-          issuer: c.issuer || "unknown",
-          subject: identifier,
-          onchain: false, // TODO: check PDA
-          provider: "agentpass",
-          metadata: c,
-        }));
-
-        return { hasCredentials: creds.length > 0, credentials: creds };
-      } catch {
-        return { hasCredentials: false, credentials: [] };
+      if (passport.status && passport.status !== "active") {
+        return { verified: false, provider: this.name, error: `Status: ${passport.status}` };
       }
-    },
 
-    async resolveWallet(walletAddress: string): Promise<string | null> {
-      // TODO: reverse lookup from on-chain PDA
-      return null;
-    },
-  };
+      const result: IdentityResult = {
+        verified: true,
+        provider: this.name,
+        agentId: passportId,
+        name: passport.name,
+        metadata: { email: passport.email },
+      };
+
+      // Check on-chain binding if connection available
+      if (this.connection) {
+        try {
+          const [pda] = PublicKey.findProgramAddressSync(
+            [Buffer.from("passport"), Buffer.from(passportId)],
+            PROGRAM_ID
+          );
+          const info = await this.connection.getAccountInfo(pda);
+          result.onchain = info !== null;
+        } catch {
+          result.onchain = false;
+        }
+      }
+
+      return result;
+    } catch (err: any) {
+      return { verified: false, provider: this.name, error: err.message };
+    }
+  }
+
+  async checkCredential(query: CredentialQuery): Promise<CredentialResult> {
+    const passportId = query.agentId;
+    if (!passportId) {
+      return { hasCredential: false, provider: this.name, credentials: [], error: "agentId required" };
+    }
+
+    try {
+      const url = new URL(`${AGENTPASS_API}/v1/passports/${passportId}/credentials`);
+      if (query.credentialType) url.searchParams.set("type", query.credentialType);
+
+      const res = await fetch(url.toString(), {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!res.ok) {
+        return { hasCredential: false, provider: this.name, credentials: [] };
+      }
+
+      const data = await res.json();
+      const creds = (data.credentials ?? data ?? []).map((c: any) => ({
+        type: c.type || c.credential_type || "unknown",
+        issuer: c.issuer || "unknown",
+        issuedAt: c.issued_at,
+        onchain: false, // Would need on-chain check per credential
+      }));
+
+      return { hasCredential: creds.length > 0, provider: this.name, credentials: creds };
+    } catch (err: any) {
+      return { hasCredential: false, provider: this.name, credentials: [], error: err.message };
+    }
+  }
+
+  async trustScore(query: IdentityQuery): Promise<number | null> {
+    const result = await this.verify(query);
+    // AgentPass doesn't have numeric trust scores — binary verified/not
+    return result.verified ? 0.5 : null;
+  }
 }
