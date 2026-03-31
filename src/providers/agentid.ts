@@ -4,21 +4,22 @@ import type {
   CredentialCheckResult,
 } from "../types";
 
-const DEFAULT_API = "https://getagentid.dev/api";
+const DEFAULT_API = "https://www.getagentid.dev/api/v1";
 
 export interface AgentIDConfig {
   apiUrl?: string;
+  apiKey?: string;
 }
 
 /**
- * AgentID provider stub.
- * 
- * This is a placeholder for the AgentID team to implement.
+ * AgentID identity provider for Solana Agent Kit.
+ *
+ * Verifies agents via the AgentID platform (getagentid.dev).
+ * Trust levels: L1 (Registered) → L4 (Certified, $100k/day).
+ * Ed25519 public key = Solana address (same key, same identity).
+ *
  * See: https://github.com/haroldmalikfrimpong-ops/getagentid
- * 
- * AgentID uses Ed25519 keys where the public key IS a Solana address.
- * Trust levels: L0 (unverified) → L4 (full trust, $10k/day spending).
- * Verification via challenge-response.
+ * Docs: https://getagentid.dev/docs
  */
 export function createAgentIDProvider(
   config: AgentIDConfig = {}
@@ -30,35 +31,88 @@ export function createAgentIDProvider(
 
     async verify(identifier, options = {}): Promise<VerifyResult> {
       try {
-        // AgentID lookup: wallet address → agent
-        const res = await fetch(`${apiUrl}/agents/${identifier}`, {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(5000),
-        });
+        // Step 1: Search for agent by Solana address via discover endpoint
+        const searchRes = await fetch(
+          `${apiUrl}/agents/discover?capability=&owner=&limit=100`,
+          {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(8000),
+          }
+        );
 
-        if (!res.ok) {
+        if (!searchRes.ok) {
           return {
             verified: false,
             provider: "agentid",
-            error: `Agent not found (${res.status})`,
+            error: `Discovery failed (${searchRes.status})`,
           };
         }
 
-        const agent = await res.json();
+        const searchData = await searchRes.json();
+        const agents = searchData.agents || [];
 
-        // Normalize trust level (L0-L4) to 0-1 score
-        const trustLevel = agent.trust_level ?? agent.trustLevel ?? 0;
+        // Find agent by Solana address match
+        const agent = agents.find(
+          (a: any) =>
+            a.solana_address === identifier ||
+            a.agent_id === identifier
+        );
+
+        if (!agent) {
+          return {
+            verified: false,
+            provider: "agentid",
+            error: "Agent not found for this wallet address",
+          };
+        }
+
+        // Step 2: Full verification via verify endpoint
+        const verifyRes = await fetch(`${apiUrl}/agents/verify`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            ...(config.apiKey
+              ? { Authorization: `Bearer ${config.apiKey}` }
+              : {}),
+          },
+          body: JSON.stringify({ agent_id: agent.agent_id }),
+          signal: AbortSignal.timeout(8000),
+        });
+
+        if (!verifyRes.ok) {
+          return {
+            verified: false,
+            provider: "agentid",
+            error: `Verification failed (${verifyRes.status})`,
+          };
+        }
+
+        const data = await verifyRes.json();
+
+        // Normalize trust level (L1-L4) to 0-1 score
+        const trustLevel = data.trust_level ?? 1;
         const trustScore = trustLevel / 4;
 
         return {
-          verified: true,
+          verified: data.verified === true,
           provider: "agentid",
-          name: agent.name || agent.agent_name,
+          name: data.name,
           trustScore,
-          onchainBound: true, // AgentID key IS a Solana address
+          onchainBound: !!data.solana_wallet?.solana_address,
           metadata: {
+            agentId: data.agent_id,
+            did: data.did,
             trustLevel,
-            agentId: agent.id || agent.agent_id,
+            trustLevelLabel: data.trust_level_label,
+            riskScore: data.behaviour?.risk_score ?? 0,
+            scarringScore: data.scarring_score ?? 0,
+            negativeSignals: data.negative_signals ?? 0,
+            resolvedSignals: data.resolved_signals ?? 0,
+            certificateValid: data.certificate_valid,
+            capabilities: data.capabilities,
+            supportedKeyTypes: data.supported_key_types,
+            isOnline: data.is_online,
           },
         };
       } catch (err: any) {
@@ -70,27 +124,62 @@ export function createAgentIDProvider(
       }
     },
 
-    async checkCredentials(identifier, filter = {}): Promise<CredentialCheckResult> {
+    async checkCredentials(
+      identifier,
+      filter = {}
+    ): Promise<CredentialCheckResult> {
       try {
-        const res = await fetch(`${apiUrl}/agents/${identifier}/credentials`, {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(5000),
-        });
+        // Search for agent first
+        const searchRes = await fetch(
+          `${apiUrl}/agents/discover?capability=&limit=100`,
+          {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(8000),
+          }
+        );
 
-        if (!res.ok) {
+        if (!searchRes.ok) {
           return { hasCredentials: false, credentials: [] };
         }
 
-        const data = await res.json();
-        const creds = (data.credentials ?? data ?? [])
+        const searchData = await searchRes.json();
+        const agent = (searchData.agents || []).find(
+          (a: any) =>
+            a.solana_address === identifier ||
+            a.agent_id === identifier
+        );
+
+        if (!agent) {
+          return { hasCredentials: false, credentials: [] };
+        }
+
+        // Get credentials from credentials endpoint
+        const credRes = await fetch(
+          `${apiUrl}/agents/credentials?agent_id=${agent.agent_id}`,
+          {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+
+        if (!credRes.ok) {
+          return { hasCredentials: false, credentials: [] };
+        }
+
+        const credData = await credRes.json();
+        const creds = (credData.credentials ?? [])
           .filter((c: any) => !filter.type || c.type === filter.type)
           .map((c: any) => ({
             type: c.type || "unknown",
-            issuer: c.issuer || "unknown",
+            issuer: c.issuer || "agentid",
             subject: identifier,
-            onchain: !!c.onchain_receipt,
+            onchain: true, // AgentID receipts are anchored on Solana
             provider: "agentid",
-            metadata: c,
+            metadata: {
+              issuedAt: c.issued_at,
+              expiresAt: c.expires_at,
+              signature: c.signature,
+            },
           }));
 
         return { hasCredentials: creds.length > 0, credentials: creds };
@@ -100,7 +189,8 @@ export function createAgentIDProvider(
     },
 
     async resolveWallet(walletAddress: string): Promise<string | null> {
-      // In AgentID, the wallet IS the identity
+      // In AgentID, the Ed25519 public key IS the Solana address
+      // No separate resolution needed
       return walletAddress;
     },
   };
