@@ -46,7 +46,7 @@ export class AgentPassProvider implements IdentityProvider {
         };
       }
 
-      const data = await res.json();
+      const data = await res.json() as any;
       const passport = data.passport ?? data;
 
       if (passport.status && passport.status !== "active") {
@@ -106,7 +106,7 @@ export class AgentPassProvider implements IdentityProvider {
 
       if (!res.ok) return [];
 
-      const data = await res.json();
+      const data = await res.json() as any;
       const creds = data.credentials ?? data ?? [];
 
       return creds.map((c: any) => ({

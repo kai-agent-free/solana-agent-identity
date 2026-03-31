@@ -92,7 +92,7 @@ export class SATPProvider implements IdentityProvider {
         };
       }
 
-      const profile: AgentFolioProfile = await res.json();
+      const profile = await res.json() as AgentFolioProfile;
       return this.mapProfileToResult(profile);
     } catch (err: unknown) {
       const error = err as Error;
