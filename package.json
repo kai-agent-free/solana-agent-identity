@@ -6,9 +6,20 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
-  "keywords": ["solana", "agent", "identity", "agentpass", "agentid", "satp", "credentials", "verification"],
+  "keywords": [
+    "solana",
+    "agent",
+    "identity",
+    "agentpass",
+    "agentid",
+    "satp",
+    "credentials",
+    "verification"
+  ],
   "license": "MIT",
   "peerDependencies": {
     "solana-agent-kit": "^2.0.0"
@@ -18,7 +29,8 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "solana-agent-kit": "^2.0.0",
     "typescript": "^5.0.0",
-    "solana-agent-kit": "^2.0.0"
+    "vitest": "^4.1.2"
   }
 }
