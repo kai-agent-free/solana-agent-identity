@@ -24,6 +24,7 @@ interface VerifyResponse {
   trust_level?: number;
   trust_level_label?: string;
   agent_id?: string;
+  agent_type?: string;
   did?: string;
   solana_wallet?: { solana_address?: string };
   behaviour?: { risk_score?: number };
@@ -34,6 +35,7 @@ interface VerifyResponse {
   capabilities?: unknown;
   supported_key_types?: unknown;
   is_online?: boolean;
+  context_continuity?: { score?: number };
 }
 
 /**
@@ -109,7 +111,7 @@ export function createAgentIDProvider(
         const trustLevel = data.trust_level ?? 1;
 
         return {
-          verified: data.verified === true,
+          verified: data.verified === true && data.certificate_valid !== false,
           provider: "agentid",
           name: data.name,
           trustLevel: trustLevel / 4, // normalize L1-L4 to 0-1
@@ -127,6 +129,8 @@ export function createAgentIDProvider(
             capabilities: data.capabilities,
             supportedKeyTypes: data.supported_key_types,
             isOnline: data.is_online,
+            agentType: data.agent_type,
+            contextContinuity: data.context_continuity?.score,
           },
         };
       } catch (err: unknown) {
