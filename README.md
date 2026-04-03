@@ -10,6 +10,7 @@ One plugin, multiple identity providers. Instead of competing plugins that each 
 |----------|-----------|----------------|
 | **AgentPass** | [@kai-agent-free](https://github.com/kai-agent-free) | Passports, MVA credentials, on-chain PDA binding |
 | **AgentID** | [@haroldmalikfrimpong-ops](https://github.com/haroldmalikfrimpong-ops) | Ed25519 identity, trust levels L0-L4 |
+| **APS** | [@aeoess](https://github.com/aeoess) | Passport grades, attestation flags, delegation chains |
 | **SATP** | [@0xbrainkid](https://github.com/0xbrainkid) | Behavioral trust, reputation scoring *(coming soon)* |
 
 ## Usage
@@ -20,11 +21,13 @@ import {
   createIdentityPlugin,
   AgentPassProvider,
   AgentIDProvider,
+  APSProvider,
 } from "solana-agent-identity";
 
 const plugin = createIdentityPlugin([
   new AgentPassProvider(),
   new AgentIDProvider(),
+  new APSProvider({ minGrade: 1 }),
   // new SATPProvider(),  // coming soon
 ]);
 
@@ -57,10 +60,10 @@ const result2 = await agent.methods.verify_agent({
        │ (aggregator)    │
        └──┬─────┬─────┬─┘
           │     │     │
-    ┌─────▼─┐ ┌▼────┐ ┌▼────┐
-    │Agent  │ │Agent│ │SATP │  ← multiple providers
-    │Pass   │ │ID   │ │     │
-    └───────┘ └─────┘ └─────┘
+    ┌─────▼─┐ ┌▼────┐ ┌▼───┐ ┌▼────┐
+    │Agent  │ │Agent│ │APS │ │SATP │  ← multiple providers
+    │Pass   │ │ID   │ │    │ │     │
+    └───────┘ └─────┘ └────┘ └─────┘
 ```
 
 ## Adding a Provider
