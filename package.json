@@ -14,11 +14,9 @@
     "solana",
     "agent",
     "identity",
-    "agentpass",
-    "agentid",
-    "satp",
-    "credentials",
-    "verification"
+    "verification",
+    "ai-agent",
+    "solana-agent-kit"
   ],
   "license": "MIT",
   "peerDependencies": {
@@ -32,5 +30,20 @@
     "solana-agent-kit": "^2.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.2"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kai-agent-free/solana-agent-identity"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   }
 }
